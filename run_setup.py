@@ -4,7 +4,6 @@ Appwrite မှာ collections တွေ အလိုအလျောက် creat
 """
 from appwrite.client import Client
 from appwrite.services.databases import Databases
-from appwrite.enums import IndexType
 from config import *
 
 client = Client()
