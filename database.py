@@ -13,10 +13,6 @@ client.set_key(APPWRITE_API_KEY)
 
 db = Databases(client)
 
-def _run(coro):
-    """Sync wrapper for Appwrite SDK (sync SDK)"""
-    return coro
-
 # ===== USER FUNCTIONS =====
 def get_user(user_id: int):
     try:
@@ -38,7 +34,7 @@ def create_user(user_id: int, username: str, full_name: str, referred_by=None):
             "user_id": user_id,
             "username": username or "",
             "full_name": full_name or "",
-            "credits": REGISTER_CREDITS,
+            "credits": REGISTER_CREDITS,    # free credits on registration
             "registered": True
         }
         if referred_by:
@@ -136,6 +132,33 @@ def add_v2ray_key(key_value: str):
         })
     except Exception as e:
         print(f"add_v2ray_key error: {e}")
+
+def delete_key_from_pool(key_value: str) -> bool:
+    """Delete a key from either outline_pool or v2ray_pool by its exact key_value."""
+    try:
+        # Search in outline_pool
+        result = db.list_documents(
+            APPWRITE_DATABASE_ID, COLLECTION_OUTLINE_POOL,
+            queries=[Query.equal("key_value", key_value), Query.limit(1)]
+        )
+        if result["documents"]:
+            doc_id = result["documents"][0]["$id"]
+            db.delete_document(APPWRITE_DATABASE_ID, COLLECTION_OUTLINE_POOL, doc_id)
+            return True
+        
+        # Search in v2ray_pool
+        result = db.list_documents(
+            APPWRITE_DATABASE_ID, COLLECTION_V2RAY_POOL,
+            queries=[Query.equal("key_value", key_value), Query.limit(1)]
+        )
+        if result["documents"]:
+            doc_id = result["documents"][0]["$id"]
+            db.delete_document(APPWRITE_DATABASE_ID, COLLECTION_V2RAY_POOL, doc_id)
+            return True
+        return False
+    except Exception as e:
+        print(f"delete_key_from_pool error: {e}")
+        return False
 
 def count_keys():
     try:
