@@ -17,6 +17,7 @@ class AdminState(StatesGroup):
     add_outline = State()
     add_v2ray = State()
     broadcast = State()
+    delete_key = State()          # NEW: admin delete key
 
 # ===== KEYBOARDS =====
 def main_keyboard():
@@ -53,10 +54,13 @@ def admin_keyboard():
             InlineKeyboardButton(text="➕ V2RAY Keys", callback_data="admin_add_v2ray")
         ],
         [
-            InlineKeyboardButton(text="📋 Pending Requests", callback_data="admin_pending"),
+            InlineKeyboardButton(text="🗑 Delete Key", callback_data="admin_delete_key"),   # NEW
             InlineKeyboardButton(text="📊 Stats", callback_data="admin_stats")
         ],
-        [InlineKeyboardButton(text="📢 Broadcast", callback_data="admin_broadcast")]
+        [
+            InlineKeyboardButton(text="📋 Pending Requests", callback_data="admin_pending"),
+            InlineKeyboardButton(text="📢 Broadcast", callback_data="admin_broadcast")
+        ]
     ])
 
 def back_keyboard():
@@ -84,6 +88,7 @@ async def cmd_start(message: Message, state: FSMContext):
                     ref_id = None
             except:
                 ref_id = None
+        # create_user already adds REGISTER_CREDITS inside
         create_user(message.from_user.id, message.from_user.username, message.from_user.full_name, ref_id)
         if ref_id:
             add_credits(ref_id, REFER_CREDITS)
@@ -139,6 +144,10 @@ async def cb_register(callback: CallbackQuery, state: FSMContext):
 
 async def register_name(message: Message, state: FSMContext):
     await state.clear()
+    # If user doesn't exist yet, create with default credits (though usually already exists via /start)
+    user = get_user(message.from_user.id)
+    if not user:
+        create_user(message.from_user.id, message.from_user.username, message.from_user.full_name, None)
     await message.answer(
         f"✅ <b>Register အောင်မြင်ပါသည်!</b>\n\n"
         f"👤 Name: {message.text}\n"
@@ -149,8 +158,8 @@ async def register_name(message: Message, state: FSMContext):
 
 # ===== REFER =====
 async def cb_refer(callback: CallbackQuery):
-    bot_info = await callback.bot.get_me()
-    ref_link = f"https://t.me/{bot_info.username}?start=ref_{callback.from_user.id}"
+    # Static refer link as requested: https://t.me/bug303
+    ref_link = f"{REFER_BASE_URL}?start=ref_{callback.from_user.id}"
     await callback.message.edit_text(
         f"🔗 <b>Referral System</b>\n"
         f"━━━━━━━━━━━━━━━━\n"
@@ -356,16 +365,56 @@ async def admin_collect_keys(message: Message, state: FSMContext):
             for k in keys_list:
                 add_outline_key(k)
             await message.answer(f"✅ Outline Keys <b>{count}</b> ခု ထည့်ပြီ!", reply_markup=admin_keyboard(), parse_mode="HTML")
-        else:
+        elif current == AdminState.add_v2ray:
             for k in keys_list:
                 add_v2ray_key(k)
             await message.answer(f"✅ V2RAY Keys <b>{count}</b> ခု ထည့်ပြီ!", reply_markup=admin_keyboard(), parse_mode="HTML")
+        else:
+            await message.answer("State error. ထပ်ကြိုးစားပါ.")
         await state.clear()
     else:
         keys_list.append(message.text.strip())
         await state.update_data(keys=keys_list)
         await message.answer(f"✅ {len(keys_list)} ခု - ဆက်ရိုက်ပါ သို့မဟုတ် /done")
 
+# ===== ADMIN DELETE KEY ===== (NEW)
+async def cb_admin_delete_key(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in ADMIN_IDS:
+        return
+    await callback.message.edit_text(
+        "🗑 <b>Delete Key</b>\n\n"
+        "ဖျက်လိုသော Key အပြည့်အစုံကို ရိုက်ထည့်ပါ။\n"
+        "(Outline သို့မဟုတ် V2RAY key value တစ်ခုလုံး)\n\n"
+        "ပယ်ဖျက်လိုပါက /cancel ရိုက်ပါ။",
+        parse_mode="HTML"
+    )
+    await state.set_state(AdminState.delete_key)
+
+async def admin_delete_key_handler(message: Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    key_value = message.text.strip()
+    if key_value == "/cancel":
+        await state.clear()
+        await message.answer("❌ Key ဖျက်ခြင်းကို ပယ်ဖျက်လိုက်ပြီ။", reply_markup=admin_keyboard())
+        return
+    
+    deleted = delete_key_from_pool(key_value)
+    if deleted:
+        await message.answer(
+            f"✅ Key ကို အောင်မြင်စွာ ဖျက်ပြီးပါပြီ။\n\n`{key_value}`",
+            parse_mode="HTML",
+            reply_markup=admin_keyboard()
+        )
+    else:
+        await message.answer(
+            f"❌ Key မတွေ့ပါ။ ထပ်မံစစ်ဆေးပါ။\n\n`{key_value}`",
+            parse_mode="HTML",
+            reply_markup=admin_keyboard()
+        )
+    await state.clear()
+
+# ===== ADMIN PENDING REQUESTS =====
 async def cb_admin_pending(callback: CallbackQuery):
     if callback.from_user.id not in ADMIN_IDS:
         return
@@ -420,6 +469,7 @@ async def cb_approve_direct(callback: CallbackQuery):
     except:
         pass
 
+# ===== ADMIN BROADCAST =====
 async def cb_admin_broadcast(callback: CallbackQuery, state: FSMContext):
     if callback.from_user.id not in ADMIN_IDS:
         return
@@ -464,12 +514,14 @@ def register_handlers(dp: Dispatcher):
     dp.message.register(buy_credits_amount, BuyCreditsState.waiting_amount)
     dp.message.register(admin_collect_keys, AdminState.add_outline)
     dp.message.register(admin_collect_keys, AdminState.add_v2ray)
+    dp.message.register(admin_delete_key_handler, AdminState.delete_key)   # NEW
     dp.message.register(admin_broadcast_msg, AdminState.broadcast)
 
     dp.callback_query.register(cb_admin_back, F.data == "admin_back")
     dp.callback_query.register(cb_admin_stats, F.data == "admin_stats")
     dp.callback_query.register(cb_admin_add_outline, F.data == "admin_add_outline")
     dp.callback_query.register(cb_admin_add_v2ray, F.data == "admin_add_v2ray")
+    dp.callback_query.register(cb_admin_delete_key, F.data == "admin_delete_key")   # NEW
     dp.callback_query.register(cb_admin_pending, F.data == "admin_pending")
     dp.callback_query.register(cb_admin_broadcast, F.data == "admin_broadcast")
     dp.callback_query.register(cb_approve_req, F.data.startswith("apv_req_"))
